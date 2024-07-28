@@ -1,0 +1,352 @@
+---
+name: Build
+run-name: Build Pipeline
+on:
+  workflow_dispatch:
+    inputs:
+      force_pkg:
+        description: 'Build package (or XOR)'
+        type: choice
+        options:
+          - None
+          - accel-ppp
+          - aws-gwlbtun
+          - ddclient
+          - dropbear
+          - ethtool
+          - frr
+          - hostap
+          - hsflowd
+          - hvinfo
+          - intel-ixgbe
+          - intel-ixgbevf
+          - intel-qat
+          - ipaddrcheck
+          - isc-dhcp
+          - isc-kea
+          - jool
+          - keepalived
+          - libnss-mapuser
+          - libnss-tacplus
+          - libpam-radius-auth
+          - libpam-tacplus
+          - libtacplus-map
+          - libvyosconfig
+          - linux-firmware
+          - linux-kernel
+          - live-boot
+          - nat-rtsp
+          - net-snmp
+          - ndppd
+          - netfilter
+          - opennhrp
+          - openvpn-otp
+          - ovpn-dco
+          - owamp
+          - pmacct
+          - podman
+          - pyhumps
+          - radvd
+          - strongswan
+          - telegraf
+          - udp-broadcast-relay
+          - vyatta-bash
+          - vyatta-biosdevname
+          - vyatta-cfg
+          - vyatta-wanloadbalance
+          - vyos-cloud-init
+          - vyos-http-api-tools
+          - vyos-user-utils
+          - vyos-utils
+          - vyos-xe-guest-utilities
+          - vyos-1x
+          - waagent
+          - wide-dhcpv6
+      build_pkg_group:
+        description: 'Build package group'
+        type: choice
+        options:
+          - None
+          - vyos-build
+          - Extras
+          - Kernel
+          - Full Build
+      commit_sha:
+        description: 'Commit SHA for selection'
+        required: false
+        default: ''
+        type: string
+      vyos-build-commit:
+        description: 'vyos-build commit id (opt.)'
+        required: false
+        default: ''
+        type: string
+      upload_debs:
+        description: 'Upload debs & build repo'
+        default: true
+        type: boolean
+      build_iso:
+        description: 'Build .iso'
+        default: false
+        type: boolean
+      upload_iso:
+        description: 'Upload .iso'
+        default: true
+        type: boolean
+  workflow_call:
+    inputs:
+      force_pkg:
+        description: 'Build package (or XOR)'
+        type: string
+        default: 'None'
+        required: false
+      build_pkg_group:
+        description: 'Build package group'
+        type: string
+        default: 'None'
+        required: false
+      commit_sha:
+        description: 'Commit SHA for selection'
+        required: false
+        default: ''
+        type: string
+      vyos-build-commit:
+        description: 'vyos-build commit id (opt.)'
+        required: false
+        default: ''
+        type: string
+      upload_debs:
+        description: 'Upload debs & build repo'
+        default: true
+        type: boolean
+      build_iso:
+        description: 'Build .iso'
+        default: false
+        type: boolean
+      upload_iso:
+        description: 'Upload .iso'
+        default: true
+        type: boolean
+
+env:
+  BUILD_BRANCH: ${{ github.ref_name }}
+  BUILD_FLAVOR: 1.5_Base
+  BUILD_ARCH: amd64
+
+
+
+
+
+jobs:
+  setup:
+    runs-on: ubuntu-latest
+    outputs:
+      mymatrix: ${{ steps.getPackages.outputs.packages }}
+      vyosbuildSHA: ${{ steps.getVyosBuildSHA.outputs.SHA }}
+    steps:
+      - name: Print workflow inputs
+        run: |
+          echo "force_pkg: ${{ inputs.force_pkg }}"
+          echo "build_pkg_group: ${{ inputs.build_pkg_group }}"
+          echo "commit_sha: ${{ inputs.commit_sha }}"
+          echo "vyos-build-commit: ${{ inputs.vyos-build-commit }}"
+          echo "upload_debs: ${{ inputs.upload_debs }}"
+          echo "build_iso: ${{ inputs.build_iso }}"
+          echo "upload_iso: ${{ inputs.upload_iso }}"
+
+      - name: Set vyos-build commit id
+        id: getVyosBuildSHA
+        run: |
+          [ -n "${{ inputs.vyos-build-commit }}" ] \
+            && { echo "SHA=${{ inputs.vyos-build-commit }}" | tee -a $GITHUB_OUTPUT ; } \
+            || { echo "SHA=$(curl -sL https://api.github.com/repos/vyos/vyos-build/commits/${{ env.BUILD_BRANCH }} | jq -r .'sha')" | tee -a $GITHUB_OUTPUT ; }
+
+      - name: Checkout my repository
+        id: myRepoCheckout
+        run: |
+          git clone --quiet https://${{ secrets.ROUTER_SOURCE_REPO_TOKEN }}@${{ secrets.ROUTER_SOURCE_REPO }} --single-branch -b ${{ env.BUILD_BRANCH }} _moveme &>/dev/null
+          mv _moveme/.scripts ./
+
+      - name: Get Package List
+        id: getPackages
+        working-directory: .scripts
+        run: |
+          kver=$(curl -sL https://raw.githubusercontent.com/vyos/vyos-build/${{ steps.getVyosBuildSHA.outputs.SHA }}/data/defaults.toml | grep kernel_version | sed -E -e 's|^.*"(.*)"$|\1|')
+          echo packages=$(jq -cn --argjson cmds \
+          "$(python3 depChecker.py -b '${{ env.BUILD_BRANCH }}' \
+           -p '${{ inputs.force_pkg }}' \
+           -c '${{ inputs.commit_sha }}' \
+           -g '${{ inputs.build_pkg_group }}')" \
+           '{cmd: $cmds}') | tee -a $GITHUB_OUTPUT
+
+      - name: Print job outputs
+        run: |
+          echo "mymatrix: ${{ steps.getPackages.outputs.packages }}"
+          echo "vyosbuildSHA: ${{ steps.getVyosBuildSHA.outputs.SHA }}"
+
+
+
+
+
+
+
+
+# Package routines
+  bp:
+    if: ${{ needs.setup.outputs.mymatrix != '[]' && needs.setup.outputs.mymatrix != '' && !(cancelled() || contains(needs.*.result, 'cancelled') || contains(needs.*.result, 'failure')) }}
+    runs-on: ubuntu-latest
+    needs: setup
+    container:
+      image: vyos/vyos-build:current
+      options: --privileged --sysctl net.ipv6.conf.lo.disable_ipv6=0
+    strategy:
+      matrix: ${{ fromJson(needs.setup.outputs.mymatrix) }}
+      fail-fast: false
+
+    steps:
+      - name: Set safe-dir
+        run: git config --global --add safe.directory '*'
+
+      - name: Checkout vyos-build
+        uses: actions/checkout@v4
+        id: vyosBuildCheckout
+        with:
+          repository: 'vyos/vyos-build'
+          ref: ${{ github.ref_name }}
+          show-progress: true
+          fetch-depth: 0
+
+      - name: Reset repo
+        run: git reset --hard ${{ needs.setup.outputs.vyosbuildSHA }}
+
+      - name: Checkout my repository
+        id: myRepoCheckout
+        run: git clone --quiet https://${{ secrets.ROUTER_SOURCE_REPO_TOKEN }}@${{ secrets.ROUTER_SOURCE_REPO }} --single-branch -b ${{ env.BUILD_BRANCH }} _moveme &>/dev/null
+
+      - name: Move files
+        run: |
+          mv -f _moveme/.scripts ./
+          rm -rf _moveme
+
+      - name: APT Refresh
+        run: apt-get update
+
+      - name: Build package
+        id: build
+        working-directory: packages
+        run: ${{ matrix.cmd }}
+
+      #- name: Upload artifact to github
+      #  uses: actions/upload-artifact@v4
+      #  id: artifact-upload
+      #  with:
+      #    name: ${{ steps.build.outputs.artifact_name }}
+      #    path: packages/*.deb
+      #    retention-days: 1
+
+      - name: Add SSH Keys
+        if: ${{ inputs.upload_debs }}
+        id: addssh
+        uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY }}
+
+      - name: Send .deb to repo
+        if: ${{ inputs.upload_debs && steps.addssh.outcome == 'success' }}
+        working-directory: packages
+        run: ../.scripts/uploadDebs.sh -b ${{ env.BUILD_BRANCH }} -r ${{ secrets.REPOHOST }}
+
+  buildAPTRepo:
+    if: ${{ needs.bp.result == 'success' && inputs.upload_debs && !(cancelled() || contains(needs.*.result, 'cancelled') || contains(needs.*.result, 'failure')) }}
+    runs-on: ubuntu-latest
+    needs: bp
+    steps:
+      - name: Add SSH Keys
+        id: addssh
+        uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY }}
+
+      - name: Build and sign repo
+        if: ${{ steps.addssh.outcome == 'success' }}
+        run: ssh -o LogLevel=ERROR -o StrictHostKeyChecking=no "${{ secrets.REPOHOST_USER }}@${{ secrets.REPOHOST }}" "/opt/nginx/2-buildrepo.sh ${{ env.BUILD_BRANCH }}"
+
+
+
+
+
+# ISO Routines
+  build-smoketest-iso:
+    if: ${{ inputs.build_iso && inputs.upload_iso && !(cancelled() || contains(needs.*.result, 'cancelled') || contains(needs.*.result, 'failure')) }}
+    needs: [ setup, buildAPTRepo ]
+    uses: ./.github/workflows/build_iso.yml
+    secrets: inherit
+    with:
+      vyosbuildSHA: ${{ needs.setup.outputs.vyosbuildSHA }}
+      upload_iso: false
+      smoketest: true
+
+  smoketest:
+    if: ${{ needs.build-smoketest-iso.result == 'success' && !(cancelled() || contains(needs.*.result, 'cancelled') || contains(needs.*.result, 'failure')) }}
+    needs: [ setup, build-smoketest-iso ]
+    runs-on: ubuntu-24.04
+    container:
+      image: vyos/vyos-build:current
+      options: --privileged --sysctl net.ipv6.conf.lo.disable_ipv6=0
+      volumes:
+        - /dev:/dev
+    
+    strategy:
+      matrix:
+        cmd: [
+          'sudo make test',
+          'sudo make testc',
+          'sudo make testraid',
+          'sudo make testtpm'
+        ]
+      fail-fast: false
+
+    steps:
+      - name: Set safe-dir
+        run: git config --global --add safe.directory '*'
+
+      - name: Checkout vyos-build
+        uses: actions/checkout@v4
+        id: vyosBuildCheckout
+        with:
+          repository: 'vyos/vyos-build'
+          ref: ${{ github.ref_name }}
+          show-progress: true
+          fetch-depth: 0
+
+      - name: Reset repo
+        run: git reset --hard ${{ needs.setup.outputs.vyosbuildSHA }}
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: ${{ needs.build-smoketest-iso.outputs.VYOSVER }}-smoketest
+          path: build
+
+      - name: Checkout my repository
+        id: myRepoCheckout
+        run: git clone --quiet https://${{ secrets.ROUTER_SOURCE_REPO_TOKEN }}@${{ secrets.ROUTER_SOURCE_REPO }} --single-branch -b ${{ env.BUILD_BRANCH }} _moveme &>/dev/null
+
+      - name: Move files
+        run: |
+          mv -f _moveme/.scripts ./
+          mv -f _moveme/build-flavors/*.toml data/build-flavors/
+          rm -rf _moveme
+
+      - name: Smoketest
+        id: smoketest
+        run: ${{ matrix.cmd }}
+
+  build-release-iso:
+    if: ${{ inputs.build_iso && !(cancelled() || contains(needs.*.result, 'cancelled') || contains(needs.*.result, 'failure')) }}
+    needs: [ setup, buildAPTRepo, smoketest ]
+    uses: ./.github/workflows/build_iso.yml
+    secrets: inherit
+    with:
+      vyosbuildSHA: ${{ needs.setup.outputs.vyosbuildSHA }}
+      upload_iso: ${{ inputs.upload_iso }}
+      smoketest: false

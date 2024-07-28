@@ -1,0 +1,285 @@
+---
+name: Build .iso
+
+on:
+  workflow_call:
+    inputs:
+      vyosbuildSHA:
+        required: true
+        type: string
+      upload_iso:
+        required: true
+        type: boolean
+      smoketest:
+        required: true
+        type: boolean
+      version:
+        required: false
+        type: string
+    secrets:
+      REPOHOST:
+        required: true
+      GPGKEY:
+        required: false
+      MINISIGN_KEY:
+        required: true
+      UPLOADREPO:
+        required: true
+      RELEASE_PAT:
+        required: true
+    outputs:
+      VYOSVER: 
+        value: ${{ jobs.buildiso.outputs.VYOSVER }}
+
+  workflow_dispatch:
+   inputs:
+      vyosbuildSHA:
+        description: 'vyos-build commit id (opt.)'
+        default: ''
+        type: string
+      version:
+        description: 'Version string (opt.)'
+        default: ''
+        type: string
+      upload_iso:
+        description: 'Upload .iso'
+        default: false
+        type: boolean
+
+
+env:
+  BUILD_BRANCH: ${{ github.ref_name }}
+  BUILD_FLAVOR: 1.5_Base
+  BUILD_ARCH: amd64
+
+
+
+
+
+jobs:
+  buildiso:
+    runs-on: ubuntu-latest
+    outputs:
+      VYOSVER: ${{ steps.buildiso.outputs.VYOSVER }}
+    container:
+      image: vyos/vyos-build:current
+      options: --privileged --sysctl net.ipv6.conf.lo.disable_ipv6=0
+      volumes:
+        - /dev:/dev
+    steps:
+      - name: Print inputs
+        run: |
+          echo "vyosbuildSHA: ${{ inputs.vyosbuildSHA }}"
+          echo "upload_iso: ${{ inputs.upload_iso }}"
+          echo "smoketest: ${{ inputs.smoketest }}"
+          echo "version: ${{ inputs.version }}"
+
+      - name: Set safe-dir
+        run: git config --global --add safe.directory '*'
+
+      - name: Checkout vyos-build
+        uses: actions/checkout@v4
+        id: vyosBuildCheckout
+        with:
+          repository: 'vyos/vyos-build'
+          ref: ${{ github.ref_name }}
+          show-progress: true
+          fetch-depth: 0
+
+      - name: Reset repo
+        run: git reset --hard ${{ inputs.vyosbuildSHA }}
+
+      - name: Checkout my repository
+        id: myRepoCheckout
+        run: git clone --quiet https://${{ secrets.ROUTER_SOURCE_REPO_TOKEN }}@${{ secrets.ROUTER_SOURCE_REPO }} --single-branch -b ${{ env.BUILD_BRANCH }} _moveme &>/dev/null
+
+      - name: Move files
+        run: |
+          mv -f _moveme/.scripts ./
+          mv -f _moveme/build-flavors/*.toml data/build-flavors/
+          rm -rf _moveme
+
+      - name: Disable dirty check
+        run: |
+          sed -i '/if repo.is_dirty():/d' scripts/image-build/build-vyos-image \
+          && sed -i '/build_git += "-dirty"/d' scripts/image-build/build-vyos-image
+
+      - name: Get GPG key
+        run: |
+          [ -n "${{ secrets.GPGKEY }}" ] && echo "${{ secrets.GPGKEY }}" > $(pwd)/gpgpubkey \
+          || curl -sLo $(pwd)/gpgpubkey http://${{ secrets.REPOHOST }}/${{ env.BUILD_BRANCH }}/pgp-key.public
+          [ -e $(pwd)/gpgpubkey ] || { echo "You must provide your PGP key" && exit 1 ; }
+
+      - name: DeVyOS
+        shell: bash
+        run: |
+          .scripts/tomlmod.py -k website_url -v ''
+          .scripts/tomlmod.py -k support_url -v ''
+          .scripts/tomlmod.py -k bugtracker_url -v ''
+          .scripts/tomlmod.py -k documentation_url -v ''
+          .scripts/tomlmod.py -k project_news_url -v ''
+          rm -f ./data/live-build-config/includes.binary/isolinux/splash.png
+          sed -i "s/VyOS/${BUILD_BRANCH^}/" data/live-build-config/includes.binary/isolinux/menu.cfg
+          sed -i -e 's|VyOS|NoOS|g' scripts/image-build/build-vyos-image
+          sed -i -e 's|ID=vyos|ID=noos|' scripts/image-build/build-vyos-image
+
+      - name: Build ISO
+        id: buildiso
+        run: |
+          VERSIONBASE="$(cat data/versions | jq -r .$(cat data/versions | jq -r 'keys[]'))"
+          BUILDTIME="$(date -u +%Y%m%d%H%M)"
+          ROLLSTAB='stream'
+          [ -z "${{ inputs.version }}" ] \
+            && VYOSVER="${VERSIONBASE}-${ROLLSTAB}-${BUILDTIME}" \
+            || VYOSVER='${{ inputs.version }}'
+          VYOSPKGLIST="${VYOSVER}.pkglst.txt"
+
+          echo "VERSIONBASE=${VERSIONBASE}" | tee -a $GITHUB_OUTPUT
+          echo "BUILDTIME=${BUILDTIME}"     | tee -a $GITHUB_OUTPUT
+          echo "ROLLSTAB=${ROLLSTAB}"       | tee -a $GITHUB_OUTPUT
+          echo "VYOSVER=${VYOSVER}"         | tee -a $GITHUB_OUTPUT
+          echo "VYOSPKGLIST=${VYOSPKGLIST}" | tee -a $GITHUB_OUTPUT
+
+          smoketest=${{ inputs.smoketest }}
+          [ -z "${smoketest}" ] && smoketest=false
+
+          apt-get update && apt-get install -y python3-git
+
+          ./build-vyos-image ${{ env.BUILD_FLAVOR }} \
+          --architecture ${{ env.BUILD_ARCH }} \
+          --debug \
+          --build-by Anonymous \
+          --build-type release \
+          --version "${VYOSVER}" \
+          --vyos-mirror "http://${{ secrets.REPOHOST }}/${{ env.BUILD_BRANCH }}" \
+          $(${smoketest} && echo '--custom-package vyos-1x-smoketest') \
+          --custom-apt-key $(pwd)/gpgpubkey
+
+      - name: "Upload artifact: live-image"
+        if: ${{ inputs.smoketest && steps.buildiso.outcome == 'success' }}
+        uses: actions/upload-artifact@v4
+        id: artifact-upload-smoketest
+        with:
+          name: ${{ steps.buildiso.outputs.VYOSVER }}-smoketest
+          path: build/live-image-amd64.hybrid.iso
+          retention-days: 1
+          if-no-files-found: error
+
+      - name: Collect package list
+        if: ${{ steps.buildiso.outcome == 'success' }}
+        id: collectpackagelist
+        run: |
+          echo "#######################################"
+          echo "#  Generating installed package list  #"
+          echo "#######################################"
+          VYOSPKGLIST=${{ steps.buildiso.outputs.VYOSPKGLIST }}
+          mkdir -p artifacts
+          cp build/binary/live/filesystem.packages artifacts/${VYOSPKGLIST} \
+          && buildCommit=$(jq -r '.build_git' build/chroot/usr/share/vyos/version.json) \
+          && printf 'Built against vyos/vyos-build@%s\n' "${buildCommit}" | tee artifacts/${VYOSPKGLIST}.md \
+          && printf '<details>\n<summary>Included packages</summary>\n\n|Package|Version|\n|---|---|\n' >> artifacts/${VYOSPKGLIST}.md \
+          && cat build/binary/live/filesystem.packages | awk '{print "|"$1"|"$2"|"}' | tee -a artifacts/${VYOSPKGLIST}.md \
+          && printf '\n</details>\n' >> artifacts/${VYOSPKGLIST}.md
+
+      #- name: Build VMware
+      #  if: ${{ steps.buildiso.outcome == 'success' }}
+      #  id: buildvmware
+      #  working-directory: build
+      #  run: |
+      #    echo "Getting OVFTool..."
+      #    curl -sLO https://ovftool.ark-ict.nl/VMware-ovftool-4.6.0-21452615-lin.x86_64.bundle
+      #    chmod +x VMware-ovftool-4.6.0-21452615-lin.x86_64.bundle
+      #    ./VMware-ovftool-4.6.0-21452615-lin.x86_64.bundle --eulas-agreed
+      #
+      #    vmdk=vyos_vmware_image.vmdk
+      #    ovf=vyos_vmware_image.ovf
+      #    echo "Running vmdk-convert..."
+      #    _command="vmdk-convert vyos-${{ env.VYOSVER }}-${{ env.BUILD_FLAVOR }}.vmdk ${vmdk}"
+      #    echo "${_command}"
+      #    ${_command}
+      #
+      #    echo 'Generating OVF file...'
+      #    vmdk_file_size=$(du --bytes ${vmdk} | cut -f1)
+      #    vmdk_populated_size=$(vmdk-convert -i ${vmdk} | jq .used)
+      #    curl -sLo template.ovf https://raw.githubusercontent.com/vyos/vyos-vm-images/current/roles/vmware/templates/vyos_vmware_image.ovf.j2
+      #    sed template.ovf \
+      #      -e "s/{{ vmdk_file_size.stdout }}/${vmdk_file_size}/" \
+      #      -e "s/{{vmdk_populated_size}}/${vmdk_populated_size}/" \
+      #      -e "s/{{version}}/${version}/" \
+      #      > ${ovf}
+      #    rm -f template.ovf
+      #
+      #    echo 'Generating manifest file...'
+      #    openssl sha1 *.vmdk *.ovf > vyos_vmware_image.mf
+      #
+      #    echo 'Converting the OVF to OVA...'
+      #    ovftool --overwrite ${ovf} vyos-${{ env.VYOSVER }}-${{ env.BUILD_FLAVOR }}.ovf
+      #    #convert to ova after debugging ovf structure, lines 149, 158, 167
+      #    #ovftool --overwrite ${ovf} vyos-${{ env.VYOSVER }}-${{ env.BUILD_FLAVOR }}.ova
+
+      - name: Collect generated artifacts
+        if: ${{ !inputs.smoketest && steps.collectpackagelist.outcome == 'success' }}
+        id: collectimages
+        shell: bash
+        run: |
+          basename=$(cat build-vyos-image | grep 'iso_file = f' | sed -E -e 's|.*"(.*)"$|\1|' -e "s|\{version_data\['version'\]\}|${{ steps.buildiso.outputs.VYOSVER }}|" -e "s|\{build_config\['build_flavor'\]\}|${{ env.BUILD_FLAVOR }}|" -e "s|\{build_config\['architecture'\]\}|${{ env.BUILD_ARCH }}|" -e 's|.iso$||' -e 's|^vyos-||')
+          echo "BASENAME=${basename}" | tee -a $GITHUB_OUTPUT
+
+          for fmt in .iso .qcow2 .vdi .vhdx .ova .ovf .mf -disk1.vmdk
+          do            
+            ls build/vyos-${basename}${fmt} >/dev/null 2>&1 \
+            && ln -s ../build/vyos-${basename}${fmt} artifacts/${basename/vyos-/}${fmt}
+          done
+
+          [ -e artifacts/${basename}.iso ]
+
+      - name: minisign
+        if: ${{ !inputs.smoketest && steps.collectimages.outcome == 'success' }}
+        id: minisign
+        working-directory: artifacts
+        shell: bash
+        run: |
+          apt install -y minisign
+          [ -n "${{ secrets.MINISIGN_KEY }}" ] \
+          && { \
+            echo "${{ secrets.MINISIGN_KEY }}" > minisign.key \
+            && minisign -s minisign.key -Sm ${{ steps.collectimages.outputs.BASENAME }}.iso
+            rm -f minisign.key ; } \
+          || { echo "minisign.key not provided. Not signing." ; }
+
+      #- name: "Upload artifact: .iso"
+      #  if: ${{ !inputs.smoketest && steps.minisign.outcome == 'success' }}
+      #  uses: actions/upload-artifact@v4
+      #  id: artifact-upload-release
+      #  with:
+      #    name: ${{ steps.buildiso.outputs.VYOSVER }}-release
+      #    path: |
+      #      artifacts/${{ steps.buildiso.outputs.VYOSPKGLIST }}
+      #      artifacts/${{ steps.collectimages.outputs.BASENAME }}.iso
+      #      artifacts/${{ steps.collectimages.outputs.BASENAME }}.iso.minisig
+      #    retention-days: 1
+
+      - name: Create release with artifact
+        if: ${{ !inputs.smoketest && inputs.upload_iso && steps.collectimages.outcome == 'success' }}
+        uses: softprops/action-gh-release@v2
+        with:
+          repository: ${{ secrets.UPLOADREPO }}
+          token: ${{ secrets.RELEASE_PAT }}
+          name: v${{ steps.buildiso.outputs.VYOSVER }}
+          tag_name: 0-${{ steps.buildiso.outputs.BUILDTIME }}-${{ steps.buildiso.outputs.VERSIONBASE }}-${{ steps.buildiso.outputs.ROLLSTAB }}
+          make_latest: false
+          body_path: artifacts/${{ steps.buildiso.outputs.VYOSPKGLIST }}.md
+          draft: false
+          prerelease: false
+          fail_on_unmatched_files: false
+          files: |
+            artifacts/${{ steps.buildiso.outputs.VYOSPKGLIST }}
+            artifacts/${{ steps.collectimages.outputs.BASENAME }}.iso
+            artifacts/${{ steps.collectimages.outputs.BASENAME }}.iso.minisig
+            artifacts/${{ steps.collectimages.outputs.BASENAME }}.qcow2
+            artifacts/${{ steps.collectimages.outputs.BASENAME }}.vdi
+            artifacts/${{ steps.collectimages.outputs.BASENAME }}.vhdx
+#            artifacts/${{ steps.collectimages.outputs.BASENAME }}.ova
+#            artifacts/${{ steps.collectimages.outputs.BASENAME }}.ovf
+#            artifacts/${{ steps.collectimages.outputs.BASENAME }}.mf
+#            artifacts/${{ steps.collectimages.outputs.BASENAME }}-disk1.vmdk
