@@ -127,6 +127,7 @@ jobs:
           sed -i -e 's|HOME_URL="https://vyos.io"|HOME_URL=""|' scripts/make-version-file
           sed -i -e 's|SUPPORT_URL="https://support.vyos.io"|SUPPORT_URL=""|' scripts/make-version-file
           sed -i -e 's|BUG_REPORT_URL="https://vyos.dev"|BUG_REPORT_URL=""|' scripts/make-version-file
+          sed -i -e 's|VyOS|NoOS|g' data/live-build-config/includes.chroot/opt/vyatta/etc/grub/default-union-grub-entry
 
       - name: Build ISO
         id: buildiso
