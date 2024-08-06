@@ -298,7 +298,7 @@ jobs:
     strategy:
       matrix:
         cmd: [
-          'sudo make test',
+          'sudo make testd',
           'sudo make testc',
           'sudo make testraid'
         ]
