@@ -122,6 +122,7 @@ jobs:
           sed -i "s/VyOS/${BUILD_BRANCH^}/" data/live-build-config/includes.binary/isolinux/menu.cfg
           sed -i -e 's|VyOS|NoOS|g' scripts/image-build/build-vyos-image
           sed -i -e 's|ID=vyos|ID=noos|' scripts/image-build/build-vyos-image
+          sed -i -e 's|VyOS|NoOS|g' data/live-build-config/includes.chroot/opt/vyatta/etc/grub/default-union-grub-entry
 
       - name: Build ISO
         id: buildiso
