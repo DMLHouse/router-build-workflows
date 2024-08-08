@@ -158,7 +158,10 @@ jobs:
           --build-type release \
           --version "${VYOSVER}" \
           --vyos-mirror "http://${{ secrets.REPOHOST }}/${{ env.BUILD_BRANCH }}" \
-          --custom-package="intel-microcode amd64-microcode apt-transport-https$(${smoketest} && echo ' vyos-1x-smoketest')" \
+          --custom-package="intel-microcode" \
+          --custom-package="amd64-microcode" \
+          --custom-package="apt-transport-https" \
+          $(${smoketest} && echo "--custom-package vyos-1x-smoketest") \
           --custom-apt-key $(pwd)/gpgpubkey
 
           make iso
