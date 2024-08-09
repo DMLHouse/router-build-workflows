@@ -197,7 +197,7 @@ jobs:
     runs-on: ubuntu-latest
     needs: setup
     container:
-      image: vyos/vyos-build:current
+      image: vyos/vyos-build:${{ github.ref_name }}
       options: --privileged --sysctl net.ipv6.conf.lo.disable_ipv6=0
     strategy:
       matrix: ${{ fromJson(needs.setup.outputs.mymatrix) }}
@@ -291,7 +291,7 @@ jobs:
     needs: [ setup, build-smoketest-iso ]
     runs-on: ubuntu-24.04
     container:
-      image: vyos/vyos-build:current
+      image: vyos/vyos-build:${{ github.ref_name }}
       options: --privileged --sysctl net.ipv6.conf.lo.disable_ipv6=0
       volumes:
         - /dev:/dev

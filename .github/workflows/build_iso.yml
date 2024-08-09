@@ -62,7 +62,7 @@ jobs:
     outputs:
       VYOSVER: ${{ steps.buildiso.outputs.VYOSVER }}
     container:
-      image: vyos/vyos-build:current
+      image: vyos/vyos-build:${{ github.ref_name }}
       options: --privileged --sysctl net.ipv6.conf.lo.disable_ipv6=0
       volumes:
         - /dev:/dev
