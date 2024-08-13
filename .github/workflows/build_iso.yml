@@ -244,7 +244,7 @@ jobs:
           [ -n "${{ secrets.MINISIGN_KEY }}" ] \
           && { \
             echo "${{ secrets.MINISIGN_KEY }}" > minisign.key \
-            && minisign -s minisign.key -Sm ${{ steps.collectimages.outputs.BASENAME }}.iso
+            && echo ${{ secrets.MINISIGN_PASSWORD }} | minisign -s minisign.key -Sm ${{ steps.collectimages.outputs.BASENAME }}.iso
             rm -f minisign.key ; } \
           || { echo "minisign.key not provided. Not signing." ; }
 
