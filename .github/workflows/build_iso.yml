@@ -104,7 +104,9 @@ jobs:
           [ -e $(pwd)/gpgpubkey ] || { echo "You must provide your PGP key" && exit 1 ; }
 
       - name: Add minisign pubkey
-        run: curl -sLo data/live-build-config/includes.chroot/usr/share/vyos/keys/vyos-release.minisign.pub http://${{ secrets.REPOHOST }}/release.minisign.pub
+        run: |
+          curl -sLo data/live-build-config/includes.chroot/usr/share/vyos/keys/vyos-release.minisign.pub http://${{ secrets.REPOHOST }}/noos-primary.minisign.pub
+          curl -sLo data/live-build-config/includes.chroot/usr/share/vyos/keys/vyos-backup.minisign.pub  http://${{ secrets.REPOHOST }}/noos-secondary.minisign.pub
 
       # https://www.freexian.com/lts/extended/docs/how-to-use-extended-lts/
       # Fix for vyos/vyos-build@ee9b739
@@ -224,10 +226,10 @@ jobs:
         run: |
           [ -n "${{ secrets.MINISIGN_KEY }}" ] \
           && { \
-            curl -sL $(curl -sL https://api.github.com/repos/jedisct1/minisign/releases/latest| jq -r '.assets[] | select(.name | match("linux.tar.gz$")) | .browser_download_url') | tar xvzf - --strip-components=2 minisign-linux/x86_64/minisign \
+            curl -sL $(curl -sL https://api.github.com/repos/jedisct1/minisign/releases/latest | jq -r '.assets[] | select(.name | match("linux.tar.gz$")) | .browser_download_url') | tar xvzf - --strip-components=2 minisign-linux/x86_64/minisign \
             && chmod +x minisign \
             && echo "${{ secrets.MINISIGN_KEY }}" > minisign.key \
-            && ./minisign -s minisign.key -Sm ${{ steps.collectimages.outputs.BASENAME }}.iso
+            && echo ${{ secrets.MINISIGN_PASSWORD }} | ./minisign -s minisign.key -Sm ${{ steps.collectimages.outputs.BASENAME }}.iso
             rm -f minisign.key ; } \
           || { echo "minisign.key not provided. Not signing." ; }
 
