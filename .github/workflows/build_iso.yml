@@ -173,14 +173,13 @@ jobs:
           echo "#######################################"
           echo "#  Generating installed package list  #"
           echo "#######################################"
-          VYOSPKGLIST=${{ steps.buildiso.outputs.VYOSPKGLIST }}
           mkdir -p artifacts
-          cp build/binary/live/filesystem.packages artifacts/${VYOSPKGLIST} \
-          && buildCommit=$(jq -r '.build_git' build/chroot/usr/share/vyos/version.json) \
-          && printf 'Built against vyos/vyos-build@%s\n' "${buildCommit}" | tee artifacts/${VYOSPKGLIST}.md \
-          && printf '<details>\n<summary>Included packages</summary>\n\n|Package|Version|\n|---|---|\n' >> artifacts/${VYOSPKGLIST}.md \
-          && cat build/binary/live/filesystem.packages | awk '{print "|"$1"|"$2"|"}' | tee -a artifacts/${VYOSPKGLIST}.md \
-          && printf '\n</details>\n' >> artifacts/${VYOSPKGLIST}.md
+          cp build/binary/live/filesystem.packages artifacts/${{ steps.buildiso.outputs.VYOSPKGLIST }}
+          buildCommit=$(jq -r '.build_git' build/chroot/usr/share/vyos/version.json)
+          printf 'Built against vyos/vyos-build@%s\n' "${buildCommit}" | tee ReleaseNote.md
+          printf '<details>\n<summary>Included packages</summary>\n\n|Package|Version|\n|---|---|\n' >> ReleaseNote.md
+          cat build/binary/live/filesystem.packages | awk '{print "|"$1"|"$2"|"}' | tee -a ReleaseNote.md
+          printf '\n</details>\n' >> ReleaseNote.md
 
       #- name: Build VMware
       #  if: ${{ steps.buildiso.outcome == 'success' }}
@@ -220,31 +219,31 @@ jobs:
 
       - name: Collect generated artifacts
         if: ${{ !inputs.smoketest && steps.collectpackagelist.outcome == 'success' }}
-        id: collectimages
+        id: collectArtifacts
         shell: bash
         run: |
-          basename=$(cat build-vyos-image | grep 'iso_file = f' | sed -E -e 's|.*"(.*)"$|\1|' -e "s|\{version_data\['version'\]\}|${{ steps.buildiso.outputs.VYOSVER }}|" -e "s|\{build_config\['build_flavor'\]\}|${{ env.BUILD_FLAVOR }}|" -e "s|\{build_config\['architecture'\]\}|${{ env.BUILD_ARCH }}|" -e 's|.iso$||' -e 's|^vyos-||')
-          echo "BASENAME=${basename}" | tee -a $GITHUB_OUTPUT
+          artifacts=($(jq -r .artifacts[] build/manifest.json | grep -v '\.raw'))
+          if [ -z "$artifacts" ]; then echo "No artifacts generated." && exit; fi
 
-          for fmt in .iso .qcow2 .vdi .vhdx .ova .ovf .mf -disk1.vmdk
-          do            
-            ls build/vyos-${basename}${fmt} >/dev/null 2>&1 \
-            && ln -s ../build/vyos-${basename}${fmt} artifacts/${basename/vyos-/}${fmt}
+          for file in "${artifacts[@]}"
+          do
+            mv build/${file} artifacts/${file/vyos/noos}
           done
 
-          [ -e artifacts/${basename}.iso ]
+          isoFile=$(jq -r .artifacts[] build/manifest.json | grep '\.iso')
+          echo "isoFile=${isoFile/vyos/noos}" | tee -a $GITHUB_OUTPUT
 
       - name: minisign
-        if: ${{ !inputs.smoketest && steps.collectimages.outcome == 'success' }}
+        if: ${{ !inputs.smoketest && steps.collectArtifacts.outcome == 'success' }}
         id: minisign
         working-directory: artifacts
         shell: bash
         run: |
           apt install -y minisign
-          [ -n "${{ secrets.MINISIGN_KEY }}" ] \
+          [ -n "${{ secrets.MINISIGN_KEY }}" ] && [ -f ${{ steps.collectArtifacts.outputs.isoFile }} ] \
           && { \
             echo "${{ secrets.MINISIGN_KEY }}" > minisign.key \
-            && echo ${{ secrets.MINISIGN_PASSWORD }} | minisign -s minisign.key -Sm ${{ steps.collectimages.outputs.BASENAME }}.iso
+            && echo ${{ secrets.MINISIGN_PASSWORD }} | minisign -s minisign.key -Sm ${{ steps.collectArtifacts.outputs.isoFile }}
             rm -f minisign.key ; } \
           || { echo "minisign.key not provided. Not signing." ; }
 
@@ -256,12 +255,12 @@ jobs:
       #    name: ${{ steps.buildiso.outputs.VYOSVER }}-release
       #    path: |
       #      artifacts/${{ steps.buildiso.outputs.VYOSPKGLIST }}
-      #      artifacts/${{ steps.collectimages.outputs.BASENAME }}.iso
-      #      artifacts/${{ steps.collectimages.outputs.BASENAME }}.iso.minisig
+      #      artifacts/${{ steps.collectArtifacts.outputs.isoFile }}
+      #      artifacts/${{ steps.collectArtifacts.outputs.isoFile }}.minisig
       #    retention-days: 1
 
       - name: Create release with artifact
-        if: ${{ !inputs.smoketest && inputs.upload_iso && steps.collectimages.outcome == 'success' }}
+        if: ${{ !inputs.smoketest && inputs.upload_iso && steps.collectArtifacts.outcome == 'success' }}
         uses: softprops/action-gh-release@v2
         with:
           repository: ${{ secrets.UPLOADREPO }}
@@ -269,18 +268,8 @@ jobs:
           name: v${{ steps.buildiso.outputs.VYOSVER }}
           tag_name: 0-${{ steps.buildiso.outputs.BUILDTIME }}-${{ steps.buildiso.outputs.VERSIONBASE }}-${{ steps.buildiso.outputs.ROLLSTAB }}
           make_latest: false
-          body_path: artifacts/${{ steps.buildiso.outputs.VYOSPKGLIST }}.md
+          body_path: ReleaseNote.md
           draft: false
           prerelease: false
           fail_on_unmatched_files: false
-          files: |
-            artifacts/${{ steps.buildiso.outputs.VYOSPKGLIST }}
-            artifacts/${{ steps.collectimages.outputs.BASENAME }}.iso
-            artifacts/${{ steps.collectimages.outputs.BASENAME }}.iso.minisig
-            artifacts/${{ steps.collectimages.outputs.BASENAME }}.qcow2
-            artifacts/${{ steps.collectimages.outputs.BASENAME }}.vdi
-            artifacts/${{ steps.collectimages.outputs.BASENAME }}.vhdx
-#            artifacts/${{ steps.collectimages.outputs.BASENAME }}.ova
-#            artifacts/${{ steps.collectimages.outputs.BASENAME }}.ovf
-#            artifacts/${{ steps.collectimages.outputs.BASENAME }}.mf
-#            artifacts/${{ steps.collectimages.outputs.BASENAME }}-disk1.vmdk
+          files: artifacts/*
