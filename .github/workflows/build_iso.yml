@@ -227,7 +227,7 @@ jobs:
 
           for file in "${artifacts[@]}"
           do
-            mv build/${file} artifacts/${file/vyos/noos}
+            mv build/${file} artifacts/${file/vyos-/}
           done
 
           isoFile=$(jq -r .artifacts[] build/manifest.json | grep '\.iso')
