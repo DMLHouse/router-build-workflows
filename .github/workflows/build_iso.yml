@@ -231,7 +231,7 @@ jobs:
           done
 
           isoFile=$(jq -r .artifacts[] build/manifest.json | grep '\.iso')
-          echo "isoFile=${isoFile/vyos/noos}" | tee -a $GITHUB_OUTPUT
+          echo "isoFile=${isoFile/vyos-/}" | tee -a $GITHUB_OUTPUT
 
       - name: minisign
         if: ${{ !inputs.smoketest && steps.collectArtifacts.outcome == 'success' }}
