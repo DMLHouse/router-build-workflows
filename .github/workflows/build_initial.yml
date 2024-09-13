@@ -1,6 +1,5 @@
 ---
-name: Build
-run-name: Build Pipeline
+name: Build .iso and Test
 on:
   workflow_dispatch:
     inputs:
