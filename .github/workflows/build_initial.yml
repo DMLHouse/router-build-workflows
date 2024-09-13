@@ -6,7 +6,7 @@ on:
     inputs:
       build_iso:
         description: 'Build .iso'
-        default: false
+        default: true
         type: boolean
       upload_iso:
         description: 'Upload .iso'
@@ -21,7 +21,7 @@ on:
     inputs:
       build_iso:
         description: 'Build .iso'
-        default: false
+        default: true
         type: boolean
       upload_iso:
         description: 'Upload .iso'
