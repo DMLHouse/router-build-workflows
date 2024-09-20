@@ -1,6 +1,5 @@
 ---
 name: Build .iso
-
 on:
   workflow_call:
     inputs:
@@ -37,24 +36,20 @@ on:
         description: 'vyos-build commit id (opt.)'
         default: ''
         type: string
-      version:
-        description: 'Version string (opt.)'
-        default: ''
-        type: string
       upload_iso:
         description: 'Upload .iso'
         default: false
         type: boolean
-
+      # We don't allow manual build of smoketest .iso here
+      version:
+        description: 'Version string (opt.)'
+        default: ''
+        type: string
 
 env:
   BUILD_BRANCH: ${{ github.ref_name }}
   BUILD_FLAVOR: 1.4_Base
   BUILD_ARCH: amd64
-
-
-
-
 
 jobs:
   buildiso:
