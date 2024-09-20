@@ -105,19 +105,9 @@ jobs:
           || curl -sLo $(pwd)/gpgpubkey http://${{ secrets.REPOHOST }}/${{ env.BUILD_BRANCH }}/pgp-key.public
           [ -e $(pwd)/gpgpubkey ] || { echo "You must provide your PGP key" && exit 1 ; }
 
-      - name: DeVyOS
+      - name: Debrand
         shell: bash
-        run: |
-          .scripts/tomlmod.py -k website_url -v ''
-          .scripts/tomlmod.py -k support_url -v ''
-          .scripts/tomlmod.py -k bugtracker_url -v ''
-          .scripts/tomlmod.py -k documentation_url -v ''
-          .scripts/tomlmod.py -k project_news_url -v ''
-          rm -f ./data/live-build-config/includes.binary/isolinux/splash.png
-          sed -i "s/VyOS/${BUILD_BRANCH^}/" data/live-build-config/includes.binary/isolinux/menu.cfg
-          sed -i -e 's|VyOS|NoOS|g' scripts/image-build/build-vyos-image
-          sed -i -e 's|ID=vyos|ID=noos|' scripts/image-build/build-vyos-image
-          sed -i -e 's|VyOS|NoOS|g' data/live-build-config/includes.chroot/opt/vyatta/etc/grub/default-union-grub-entry
+        run: ./.scripts/debrand.sh -b ${{ env.BUILD_BRANCH }}
 
       - name: Build ISO
         id: buildiso
