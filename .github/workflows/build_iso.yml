@@ -29,6 +29,8 @@ on:
     outputs:
       VYOSVER: 
         value: ${{ jobs.buildiso.outputs.VYOSVER }}
+      REPOHASH:
+        value: ${{ jobs.buildiso.outputs.REPOHASH }}
 
   workflow_dispatch:
    inputs:
@@ -55,6 +57,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       VYOSVER: ${{ steps.buildiso.outputs.VYOSVER }}
+      REPOHASH: ${{ steps.buildiso.outputs.REPOHASH }}
     container:
       image: vyos/vyos-build:${{ github.ref_name }}
       options: --privileged --sysctl net.ipv6.conf.lo.disable_ipv6=0
@@ -137,11 +140,14 @@ jobs:
             || VYOSVER='${{ inputs.version }}'
           VYOSPKGLIST="${VYOSVER}.pkglst.txt"
 
+          REPOHASH="$(curl -s 'http://${{ secrets.REPOHOST }}/${{ env.BUILD_BRANCH }}/dists/${{ env.BUILD_BRANCH }}/Release' | grep 'main/binary-${{ env.BUILD_ARCH }}/Packages$' | tail -1 | awk '{print $1}')"
+
           echo "VERSIONBASE=${VERSIONBASE}" | tee -a $GITHUB_OUTPUT
           echo "BUILDTIME=${BUILDTIME}"     | tee -a $GITHUB_OUTPUT
           echo "ROLLSTAB=${ROLLSTAB}"       | tee -a $GITHUB_OUTPUT
           echo "VYOSVER=${VYOSVER}"         | tee -a $GITHUB_OUTPUT
           echo "VYOSPKGLIST=${VYOSPKGLIST}" | tee -a $GITHUB_OUTPUT
+          echo "REPOHASH=${REPOHASH}"       | tee -a $GITHUB_OUTPUT
 
           smoketest=${{ inputs.smoketest }}
           [ -z "${smoketest}" ] && smoketest=false

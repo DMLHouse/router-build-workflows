@@ -354,9 +354,24 @@ jobs:
         id: smoketest
         run: ${{ matrix.cmd }}
 
+  check-repo-changed:
+    if: ${{ inputs.build_iso && !(cancelled() || contains(needs.*.result, 'cancelled') || contains(needs.*.result, 'failure')) }}
+    needs: [ build-smoketest-iso, smoketest ]
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check SHA
+        shell: bash
+        run: |
+          REPOHASH="$(curl -s 'http://${{ secrets.REPOHOST }}/${{ env.BUILD_BRANCH }}/dists/${{ env.BUILD_BRANCH }}/Release' | grep 'main/binary-${{ env.BUILD_ARCH }}/Packages$' | tail -1 | awk '{print $1}')"
+          if [ ! "${REPOHASH}" == "${{ needs.build-smoketest-iso.outputs.REPOHASH }}" ]
+          then
+            echo "APT repo contents changed while testing. Abort."
+            exit 1
+          fi
+
   build-release-iso:
     if: ${{ inputs.build_iso && !(cancelled() || contains(needs.*.result, 'cancelled') || contains(needs.*.result, 'failure')) }}
-    needs: [ setup, buildAPTRepo, smoketest ]
+    needs: [ setup, buildAPTRepo, smoketest, check-repo-changed ]
     uses: ./.github/workflows/build_iso.yml
     secrets: inherit
     with:
