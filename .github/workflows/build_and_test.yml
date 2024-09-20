@@ -3,10 +3,6 @@ name: Build .iso and Test
 on:
   workflow_dispatch:
     inputs:
-      build_iso:
-        description: 'Build .iso'
-        default: true
-        type: boolean
       upload_iso:
         description: 'Upload .iso'
         default: true
@@ -18,10 +14,6 @@ on:
         type: string
   workflow_call:
     inputs:
-      build_iso:
-        description: 'Build .iso'
-        default: true
-        type: boolean
       upload_iso:
         description: 'Upload .iso'
         default: true
@@ -37,10 +29,6 @@ env:
   BUILD_FLAVOR: 1.4_Base
   BUILD_ARCH: amd64
 
-
-
-
-
 jobs:
   setup:
     runs-on: ubuntu-latest
@@ -50,7 +38,6 @@ jobs:
     steps:
       - name: Print workflow inputs
         run: |
-          echo "build_iso: ${{ inputs.build_iso }}"
           echo "upload_iso: ${{ inputs.upload_iso }}"
           echo "vyos-build-commit: ${{ inputs.vyos-build-commit }}"
 
@@ -66,7 +53,7 @@ jobs:
           echo "vyosbuildSHA: ${{ steps.getVyosBuildSHA.outputs.SHA }}"
 
   build-smoketest-iso:
-    if: ${{ inputs.build_iso && inputs.upload_iso && !(cancelled() || contains(needs.*.result, 'cancelled') || contains(needs.*.result, 'failure')) }}
+    if: ${{ always() && inputs.upload_iso && !(cancelled() || contains(needs.*.result, 'cancelled') || contains(needs.*.result, 'failure')) }}
     needs: [ setup ]
     uses: ./.github/workflows/build_iso.yml
     secrets: inherit
@@ -120,8 +107,8 @@ jobs:
         run: ${{ matrix.cmd }}
 
   build-release-iso:
-    if: ${{ inputs.build_iso && !(cancelled() || contains(needs.*.result, 'cancelled') || contains(needs.*.result, 'failure')) }}
     needs: [ setup, smoketest ]
+    if: ${{ always() && !(cancelled() || contains(needs.*.result, 'cancelled') || contains(needs.*.result, 'failure')) }}
     uses: ./.github/workflows/build_iso.yml
     secrets: inherit
     with:
