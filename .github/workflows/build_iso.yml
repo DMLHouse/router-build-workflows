@@ -116,18 +116,9 @@ jobs:
           echo "deb http://${{ secrets.FREEXIAN_REPO_HOST }} buster main contrib non-free" > /etc/apt/sources.list.d/extended-lts.list
           sed -i 's|local.deb.vyos.io/extended-lts/|${{ secrets.FREEXIAN_REPO_HOST }}|' data/defaults.json
 
-      - name: DeVyOS
+      - name: Debrand
         shell: bash
-        run: |
-          rm -f ./data/live-build-config/includes.binary/isolinux/splash.png
-          sed -i "s/VyOS/${BUILD_BRANCH^}/" data/live-build-config/includes.binary/isolinux/menu.cfg
-          sed -i -e 's|VyOS|NoOS|g' -e 's|https://.*$|\.|' data/live-build-config/includes.chroot/usr/share/vyos/default_motd
-          sed -i -e 's|VyOS|NoOS|g' scripts/make-version-file
-          sed -i -e 's|ID=vyos|ID=noos|' scripts/make-version-file
-          sed -i -e 's|HOME_URL="https://vyos.io"|HOME_URL=""|' scripts/make-version-file
-          sed -i -e 's|SUPPORT_URL="https://support.vyos.io"|SUPPORT_URL=""|' scripts/make-version-file
-          sed -i -e 's|BUG_REPORT_URL="https://vyos.dev"|BUG_REPORT_URL=""|' scripts/make-version-file
-          sed -i -e 's|VyOS|NoOS|g' data/live-build-config/includes.chroot/opt/vyatta/etc/grub/default-union-grub-entry
+        run: ./.scripts/debrand.sh -b ${{ env.BUILD_BRANCH }}
 
       - name: Build ISO
         id: buildiso
