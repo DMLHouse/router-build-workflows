@@ -141,7 +141,7 @@ jobs:
           --architecture ${{ env.BUILD_ARCH }} \
           --debug \
           --build-by Anonymous \
-          --build-type release \
+          --build-type lts \
           --version "${VYOSVER}" \
           --vyos-mirror "http://${{ secrets.REPOHOST }}/${{ env.BUILD_BRANCH }}" \
           $(${smoketest} && echo '--custom-package vyos-1x-smoketest') \
