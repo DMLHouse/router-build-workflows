@@ -105,6 +105,7 @@ jobs:
         run: |
           curl -sLo data/live-build-config/includes.chroot/usr/share/vyos/keys/vyos-release.minisign.pub http://${{ secrets.REPOHOST }}/noos-primary.minisign.pub
           curl -sLo data/live-build-config/includes.chroot/usr/share/vyos/keys/vyos-backup.minisign.pub  http://${{ secrets.REPOHOST }}/noos-secondary.minisign.pub
+          curl -sLo data/live-build-config/includes.chroot/usr/share/vyos/keys/vyos-release.pub.asc http://${{ secrets.REPOHOST }}/${{ env.BUILD_BRANCH }}/pgp-key.public
 
       # https://www.freexian.com/lts/extended/docs/how-to-use-extended-lts/
       # Fix for vyos/vyos-build@ee9b739
