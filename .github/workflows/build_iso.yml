@@ -93,8 +93,8 @@ jobs:
 
       - name: Move files
         run: |
-          mv -f _moveme/.scripts ./
           mv -f _moveme/build-flavors/${{ env.BUILD_FLAVOR }}.toml data/build-flavors/
+          mv -f _moveme/debrand.sh ./
           rm -rf _moveme
 
       - name: Disable dirty check
@@ -110,7 +110,7 @@ jobs:
 
       - name: Debrand
         shell: bash
-        run: ./.scripts/debrand.sh -b ${{ env.BUILD_BRANCH }}
+        run: ./debrand.sh -b ${{ env.BUILD_BRANCH }}
 
       - name: Build ISO
         id: buildiso
