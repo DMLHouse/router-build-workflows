@@ -1,5 +1,5 @@
----
 name: Build .iso
+run-name: "[${{ github.ref_name }}] Build .iso"
 on:
   workflow_call:
     inputs:
