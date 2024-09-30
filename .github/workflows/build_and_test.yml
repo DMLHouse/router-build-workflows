@@ -1,6 +1,4 @@
----
 name: Build
-run-name: Build Pipeline
 on:
   workflow_dispatch:
     inputs:
@@ -128,6 +126,8 @@ on:
         description: 'Upload .iso'
         default: true
         type: boolean
+
+run-name: "[${{ github.ref_name }}] Build Pipeline"
 
 env:
   BUILD_BRANCH: ${{ github.ref_name }}
