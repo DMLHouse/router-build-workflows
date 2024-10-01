@@ -48,6 +48,10 @@ on:
         default: ''
         type: string
 
+defaults:
+  run:
+    shell: bash
+
 env:
   BUILD_BRANCH: ${{ github.ref_name }}
   BUILD_FLAVOR: 1.5_Base
@@ -109,7 +113,6 @@ jobs:
           [ -e $(pwd)/gpgpubkey ] || { echo "You must provide your PGP key" && exit 1 ; }
 
       - name: Debrand
-        shell: bash
         run: ./debrand.sh -b ${{ env.BUILD_BRANCH }}
 
       - name: Build ISO
@@ -211,7 +214,6 @@ jobs:
       - name: Collect generated artifacts
         if: ${{ !inputs.smoketest && steps.collectpackagelist.outcome == 'success' }}
         id: collectArtifacts
-        shell: bash
         run: |
           artifacts=($(jq -r .artifacts[] build/manifest.json | grep -v '\.raw'))
           if [ -z "$artifacts" ]; then echo "No artifacts generated." && exit; fi
@@ -228,7 +230,6 @@ jobs:
         if: ${{ !inputs.smoketest && steps.collectArtifacts.outcome == 'success' }}
         id: minisign
         working-directory: artifacts
-        shell: bash
         run: |
           apt install -y minisign
           [ -n "${{ secrets.MINISIGN_KEY }}" ] && [ -f ${{ steps.collectArtifacts.outputs.isoFile }} ] \
