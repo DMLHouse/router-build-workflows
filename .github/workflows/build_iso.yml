@@ -48,6 +48,10 @@ on:
         default: ''
         type: string
 
+defaults:
+  run:
+    shell: bash
+
 env:
   BUILD_BRANCH: ${{ github.ref_name }}
   BUILD_ARCH: amd64
@@ -119,7 +123,6 @@ jobs:
           sed -i 's|local.deb.vyos.io/extended-lts/|${{ secrets.FREEXIAN_REPO_HOST }}|' data/defaults.json
 
       - name: Debrand
-        shell: bash
         run: ./debrand.sh -b ${{ env.BUILD_BRANCH }}
 
       - name: Build ISO
@@ -191,7 +194,6 @@ jobs:
       - name: Collect generated artifacts
         if: ${{ !inputs.smoketest && steps.collectpackagelist.outcome == 'success' }}
         id: collectimages
-        shell: bash
         run: |
           # Needs modification to support capturing additional images
           for fmt in iso ###qcow2 vdi vhdx
@@ -216,7 +218,6 @@ jobs:
         if: ${{ !inputs.smoketest && steps.collectimages.outcome == 'success' }}
         id: minisign
         working-directory: artifacts
-        shell: bash
         run: |
           [ -n "${{ secrets.MINISIGN_KEY }}" ] \
           && { \

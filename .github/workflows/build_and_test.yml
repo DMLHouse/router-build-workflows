@@ -1,4 +1,5 @@
 name: Build
+run-name: "[${{ github.ref_name }}] Build Pipeline"
 on:
   workflow_dispatch:
     inputs:
@@ -127,7 +128,9 @@ on:
         default: true
         type: boolean
 
-run-name: "[${{ github.ref_name }}] Build Pipeline"
+defaults:
+  run:
+    shell: bash
 
 env:
   BUILD_BRANCH: ${{ github.ref_name }}
@@ -360,7 +363,6 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - name: Check SHA
-        shell: bash
         run: |
           REPOHASH="$(curl -s 'http://${{ secrets.REPOHOST }}/${{ env.BUILD_BRANCH }}/dists/${{ env.BUILD_BRANCH }}/Release' | grep 'main/binary-${{ env.BUILD_ARCH }}/Packages$' | tail -1 | awk '{print $1}')"
           if [ ! "${REPOHASH}" == "${{ needs.build-smoketest-iso.outputs.REPOHASH }}" ]
