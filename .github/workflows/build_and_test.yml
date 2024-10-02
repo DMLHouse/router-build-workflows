@@ -7,8 +7,8 @@ on:
         description: 'Upload .iso'
         default: true
         type: boolean
-      vyos-build-commit:
-        description: 'vyos-build commit id (opt.)'
+      upstream_repo_commit:
+        description: 'Upstream repo SHA (opt.)'
         required: false
         default: ''
         type: string
@@ -18,8 +18,8 @@ on:
         description: 'Upload .iso'
         default: true
         type: boolean
-      vyos-build-commit:
-        description: 'vyos-build commit id (opt.)'
+      upstream_repo_commit:
+        description: 'Upstream repo SHA (opt.)'
         required: false
         default: ''
         type: string
@@ -38,23 +38,23 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       mymatrix: ${{ steps.getPackages.outputs.packages }}
-      vyosbuildSHA: ${{ steps.getVyosBuildSHA.outputs.SHA }}
+      upstream_repo_commit: ${{ steps.getUpstreamSHA.outputs.SHA }}
     steps:
       - name: Print workflow inputs
         run: |
           echo "upload_iso: ${{ inputs.upload_iso }}"
-          echo "vyos-build-commit: ${{ inputs.vyos-build-commit }}"
+          echo "upstream_repo_commit: ${{ inputs.upstream_repo_commit }}"
 
-      - name: Set vyos-build commit id
-        id: getVyosBuildSHA
+      - name: Set upstream repo SHA
+        id: getUpstreamSHA
         run: |
-          [ -n "${{ inputs.vyos-build-commit }}" ] \
-            && { echo "SHA=${{ inputs.vyos-build-commit }}" | tee -a $GITHUB_OUTPUT ; } \
-            || { echo "SHA=$(curl -sL https://api.github.com/repos/vyos/vyos-build/commits/${{ env.BUILD_BRANCH }} | jq -r .'sha')" | tee -a $GITHUB_OUTPUT ; }
+          [ -n "${{ inputs.upstream_repo_commit }}" ] \
+            && { echo "SHA=${{ inputs.upstream_repo_commit }}" | tee -a $GITHUB_OUTPUT ; } \
+            || { echo "SHA=$(curl -sL https://api.github.com/repos/${{ vars.UPSTREAM_MAIN_ROUTER_REPO }}/commits/${{ env.BUILD_BRANCH }} | jq -r .'sha')" | tee -a $GITHUB_OUTPUT ; }
 
       - name: Print job outputs
         run: |
-          echo "vyosbuildSHA: ${{ steps.getVyosBuildSHA.outputs.SHA }}"
+          echo "upstream_repo_commit: ${{ steps.getUpstreamSHA.outputs.SHA }}"
 
   build-smoketest-iso:
     if: ${{ always() && inputs.upload_iso && !(cancelled() || contains(needs.*.result, 'cancelled') || contains(needs.*.result, 'failure')) }}
@@ -62,7 +62,7 @@ jobs:
     uses: ./.github/workflows/build_iso.yml
     secrets: inherit
     with:
-      vyosbuildSHA: ${{ needs.setup.outputs.vyosbuildSHA }}
+      upstream_repo_commit: ${{ needs.setup.outputs.upstream_repo_commit }}
       upload_iso: false
       smoketest: true
 
@@ -71,7 +71,7 @@ jobs:
     needs: [ setup, build-smoketest-iso ]
     runs-on: ubuntu-24.04
     container:
-      image: vyos/vyos-build:${{ github.ref_name }}
+      image: ${{ vars.UPSTREAM_MAIN_ROUTER_REPO }}:${{ github.ref_name }}
       options: --privileged --sysctl net.ipv6.conf.lo.disable_ipv6=0
       volumes:
         - /dev:/dev
@@ -90,21 +90,20 @@ jobs:
       - name: Set safe-dir
         run: git config --global --add safe.directory '*'
 
-      - name: Checkout vyos-build
+      - name: Checkout upstream repo
         uses: actions/checkout@v4
-        id: vyosBuildCheckout
         with:
-          repository: 'vyos/vyos-build'
+          repository: '${{ vars.UPSTREAM_MAIN_ROUTER_REPO }}'
           ref: ${{ github.ref_name }}
           show-progress: true
           fetch-depth: 0
 
       - name: Reset repo
-        run: git reset --hard ${{ needs.setup.outputs.vyosbuildSHA }}
+        run: git reset --hard ${{ needs.setup.outputs.upstream_repo_commit }}
 
       - uses: actions/download-artifact@v4
         with:
-          name: ${{ needs.build-smoketest-iso.outputs.VYOSVER }}-smoketest
+          name: ${{ needs.build-smoketest-iso.outputs.VERSION }}-smoketest
           path: build
 
       - name: Smoketest
@@ -131,6 +130,6 @@ jobs:
     uses: ./.github/workflows/build_iso.yml
     secrets: inherit
     with:
-      vyosbuildSHA: ${{ needs.setup.outputs.vyosbuildSHA }}
+      upstream_repo_commit: ${{ needs.setup.outputs.upstream_repo_commit }}
       upload_iso: ${{ inputs.upload_iso }}
       smoketest: false
