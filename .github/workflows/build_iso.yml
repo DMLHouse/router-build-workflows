@@ -6,7 +6,7 @@ on:
       upload_iso:
         required: true
         type: boolean
-      vyosbuildSHA:
+      upstream_repo_commit:
         required: true
         type: string
       smoketest:
@@ -27,8 +27,8 @@ on:
       RELEASE_PAT:
         required: true
     outputs:
-      VYOSVER: 
-        value: ${{ jobs.buildiso.outputs.VYOSVER }}
+      VERSION: 
+        value: ${{ jobs.buildiso.outputs.VERSION }}
       REPOHASH:
         value: ${{ jobs.buildiso.outputs.REPOHASH }}
 
@@ -38,13 +38,13 @@ on:
         description: 'Upload .iso'
         default: true
         type: boolean
-      vyosbuildSHA:
-        description: 'vyos-build commit id (opt.)'
+      upstream_repo_commit:
+        description: 'Upstream repo SHA (opt.)'
         default: ''
         type: string
       # We don't allow manual build of smoketest .iso here
       version:
-        description: 'Version string (opt.)'
+        description: 'Version (opt.)'
         default: ''
         type: string
 
@@ -60,17 +60,17 @@ jobs:
   buildiso:
     runs-on: ubuntu-latest
     outputs:
-      VYOSVER: ${{ steps.buildiso.outputs.VYOSVER }}
+      VERSION: ${{ steps.buildiso.outputs.VERSION }}
       REPOHASH: ${{ steps.buildiso.outputs.REPOHASH }}
     container:
-      image: vyos/vyos-build:${{ github.ref_name }}
+      image: ${{ vars.UPSTREAM_MAIN_ROUTER_REPO }}:${{ github.ref_name }}
       options: --privileged --sysctl net.ipv6.conf.lo.disable_ipv6=0
       volumes:
         - /dev:/dev
     steps:
       - name: Print inputs
         run: |
-          echo "vyosbuildSHA: ${{ inputs.vyosbuildSHA }}"
+          echo "upstream_repo_commit: ${{ inputs.upstream_repo_commit }}"
           echo "upload_iso: ${{ inputs.upload_iso }}"
           echo "smoketest: ${{ inputs.smoketest }}"
           echo "version: ${{ inputs.version }}"
@@ -78,17 +78,16 @@ jobs:
       - name: Set safe-dir
         run: git config --global --add safe.directory '*'
 
-      - name: Checkout vyos-build
+      - name: Checkout upstream repo
         uses: actions/checkout@v4
-        id: vyosBuildCheckout
         with:
-          repository: 'vyos/vyos-build'
+          repository: '${{ vars.UPSTREAM_MAIN_ROUTER_REPO }}'
           ref: ${{ github.ref_name }}
           show-progress: true
           fetch-depth: 0
 
       - name: Reset repo
-        run: git reset --hard ${{ inputs.vyosbuildSHA }}
+        run: git reset --hard ${{ inputs.upstream_repo_commit }}
 
       - name: Checkout my repository
         id: myRepoCheckout
@@ -113,8 +112,8 @@ jobs:
           curl -sLo data/live-build-config/includes.chroot/usr/share/vyos/keys/vyos-release.pub.asc http://${{ secrets.REPOHOST }}/${{ env.BUILD_BRANCH }}/pgp-key.public
 
       # https://www.freexian.com/lts/extended/docs/how-to-use-extended-lts/
-      # Fix for vyos/vyos-build@ee9b739
-      # https://github.com/vyos/vyos-build/commit/ee9b7396b2d83d19a782186369427aded05c2b82
+      # Fix for ${{ vars.UPSTREAM_MAIN_ROUTER_REPO }}@ee9b739
+      # https://github.com/${{ vars.UPSTREAM_MAIN_ROUTER_REPO }}/commit/ee9b7396b2d83d19a782186369427aded05c2b82
       - name: "Patch: Include upstream Freexian"
         run: |
           sudo wget -q https://deb.freexian.com/extended-lts/archive-key.gpg -O elts-archive-key.gpg \
@@ -132,17 +131,17 @@ jobs:
           BUILDTIME="$(date -u +%Y%m%d%H%M)"
           ROLLSTAB='stable'
           [ -z "${{ inputs.version }}" ] \
-            && VYOSVER="${VERSIONBASE}-${ROLLSTAB}-${BUILDTIME}" \
-            || VYOSVER='${{ inputs.version }}'
-          VYOSPKGLIST="${VYOSVER}.pkglst.txt"
+            && VERSION="${VERSIONBASE}-${ROLLSTAB}-${BUILDTIME}" \
+            || VERSION='${{ inputs.version }}'
+          PKGLIST="${VERSION}.pkglst.txt"
 
           REPOHASH="$(curl -s 'http://${{ secrets.REPOHOST }}/${{ env.BUILD_BRANCH }}/dists/${{ env.BUILD_BRANCH }}/Release' | grep 'main/binary-${{ env.BUILD_ARCH }}/Packages$' | tail -1 | awk '{print $1}')"
 
           echo "VERSIONBASE=${VERSIONBASE}" | tee -a $GITHUB_OUTPUT
           echo "BUILDTIME=${BUILDTIME}"     | tee -a $GITHUB_OUTPUT
           echo "ROLLSTAB=${ROLLSTAB}"       | tee -a $GITHUB_OUTPUT
-          echo "VYOSVER=${VYOSVER}"         | tee -a $GITHUB_OUTPUT
-          echo "VYOSPKGLIST=${VYOSPKGLIST}" | tee -a $GITHUB_OUTPUT
+          echo "VERSION=${VERSION}"         | tee -a $GITHUB_OUTPUT
+          echo "PKGLIST=${PKGLIST}"         | tee -a $GITHUB_OUTPUT
           echo "REPOHASH=${REPOHASH}"       | tee -a $GITHUB_OUTPUT
 
           smoketest=${{ inputs.smoketest }}
@@ -155,7 +154,7 @@ jobs:
           --debug \
           --build-by Anonymous \
           --build-type release \
-          --version "${VYOSVER}" \
+          --version "${VERSION}" \
           --vyos-mirror "http://${{ secrets.REPOHOST }}/${{ env.BUILD_BRANCH }}" \
           --custom-package="intel-microcode" \
           --custom-package="amd64-microcode" \
@@ -170,7 +169,7 @@ jobs:
         uses: actions/upload-artifact@v4
         id: artifact-upload-smoketest
         with:
-          name: ${{ steps.buildiso.outputs.VYOSVER }}-smoketest
+          name: ${{ steps.buildiso.outputs.VERSION }}-smoketest
           path: build/live-image-amd64.hybrid.iso
           retention-days: 1
           if-no-files-found: error
@@ -182,14 +181,14 @@ jobs:
           echo "#######################################"
           echo "#  Generating installed package list  #"
           echo "#######################################"
-          VYOSPKGLIST=${{ steps.buildiso.outputs.VYOSPKGLIST }}
+          PKGLIST=${{ steps.buildiso.outputs.PKGLIST }}
           mkdir -p artifacts
-          cp build/binary/live/filesystem.packages artifacts/${VYOSPKGLIST} \
+          cp build/binary/live/filesystem.packages artifacts/${PKGLIST} \
           && buildCommit=$(jq -r '.build_git' build/chroot/usr/share/vyos/version.json) \
-          && printf 'Built against vyos/vyos-build@%s\n' "${buildCommit}" | tee artifacts/${VYOSPKGLIST}.md \
-          && printf '<details>\n<summary>Included packages</summary>\n\n|Package|Version|\n|---|---|\n' >> artifacts/${VYOSPKGLIST}.md \
-          && cat build/binary/live/filesystem.packages | awk '{print "|"$1"|"$2"|"}' | tee -a artifacts/${VYOSPKGLIST}.md \
-          && printf '\n</details>\n' >> artifacts/${VYOSPKGLIST}.md
+          && printf 'Built against ${{ vars.UPSTREAM_MAIN_ROUTER_REPO }}@%s\n' "${buildCommit}" | tee artifacts/${PKGLIST}.md \
+          && printf '<details>\n<summary>Included packages</summary>\n\n|Package|Version|\n|---|---|\n' >> artifacts/${PKGLIST}.md \
+          && cat build/binary/live/filesystem.packages | awk '{print "|"$1"|"$2"|"}' | tee -a artifacts/${PKGLIST}.md \
+          && printf '\n</details>\n' >> artifacts/${PKGLIST}.md
 
       - name: Collect generated artifacts
         if: ${{ !inputs.smoketest && steps.collectpackagelist.outcome == 'success' }}
@@ -198,19 +197,19 @@ jobs:
           # Needs modification to support capturing additional images
           for fmt in iso ###qcow2 vdi vhdx
           do
-            filename=vyos-${{ steps.buildiso.outputs.VYOSVER }}
+            filename=vyos-${{ steps.buildiso.outputs.VERSION }}
             [ "${fmt}" = "iso" ] && filename="${filename}-${{ env.BUILD_ARCH }}"
             ls build/${filename}.${fmt} >/dev/null 2>&1 \
             && ln -s ../build/${filename}.${fmt} ./artifacts/${filename/vyos-/}.${fmt}
           done
 
           # VMware artifacts
-          #ls build/vyos-${{ steps.buildiso.outputs.VYOSVER }}.ova >/dev/null        2>&1 && ln -s ../build/vyos-${{ steps.buildiso.outputs.VYOSVER }}.ova        ./artifacts/${{ steps.buildiso.outputs.VYOSVER }}.ova
-          #ls build/vyos-${{ steps.buildiso.outputs.VYOSVER }}.ovf >/dev/null        2>&1 && ln -s ../build/vyos-${{ steps.buildiso.outputs.VYOSVER }}.ovf        ./artifacts/${{ steps.buildiso.outputs.VYOSVER }}.ovf
-          #ls build/vyos-${{ steps.buildiso.outputs.VYOSVER }}.mf >/dev/null         2>&1 && ln -s ../build/vyos-${{ steps.buildiso.outputs.VYOSVER }}.mf         ./artifacts/${{ steps.buildiso.outputs.VYOSVER }}.mf
-          #ls build/vyos-${{ steps.buildiso.outputs.VYOSVER }}-disk1.vmdk >/dev/null 2>&1 && ln -s ../build/vyos-${{ steps.buildiso.outputs.VYOSVER }}-disk1.vmdk ./artifacts/${{ steps.buildiso.outputs.VYOSVER }}-disk1.vmdk
+          #ls build/vyos-${{ steps.buildiso.outputs.VERSION }}.ova >/dev/null        2>&1 && ln -s ../build/vyos-${{ steps.buildiso.outputs.VERSION }}.ova        ./artifacts/${{ steps.buildiso.outputs.VERSION }}.ova
+          #ls build/vyos-${{ steps.buildiso.outputs.VERSION }}.ovf >/dev/null        2>&1 && ln -s ../build/vyos-${{ steps.buildiso.outputs.VERSION }}.ovf        ./artifacts/${{ steps.buildiso.outputs.VERSION }}.ovf
+          #ls build/vyos-${{ steps.buildiso.outputs.VERSION }}.mf >/dev/null         2>&1 && ln -s ../build/vyos-${{ steps.buildiso.outputs.VERSION }}.mf         ./artifacts/${{ steps.buildiso.outputs.VERSION }}.mf
+          #ls build/vyos-${{ steps.buildiso.outputs.VERSION }}-disk1.vmdk >/dev/null 2>&1 && ln -s ../build/vyos-${{ steps.buildiso.outputs.VERSION }}-disk1.vmdk ./artifacts/${{ steps.buildiso.outputs.VERSION }}-disk1.vmdk
 
-          basename="${{ steps.buildiso.outputs.VYOSVER }}-${{ env.BUILD_ARCH }}"
+          basename="${{ steps.buildiso.outputs.VERSION }}-${{ env.BUILD_ARCH }}"
           echo "BASENAME=${basename}" | tee -a $GITHUB_OUTPUT
           [ -e artifacts/${basename}.iso ]
 
@@ -233,9 +232,9 @@ jobs:
       #  uses: actions/upload-artifact@v4
       #  id: artifact-upload-release
       #  with:
-      #    name: ${{ steps.buildiso.outputs.VYOSVER }}-release
+      #    name: ${{ steps.buildiso.outputs.VERSION }}-release
       #    path: |
-      #      artifacts/${{ steps.buildiso.outputs.VYOSPKGLIST }}
+      #      artifacts/${{ steps.buildiso.outputs.PKGLIST }}
       #      artifacts/${{ steps.collectimages.outputs.BASENAME }}.iso
       #      artifacts/${{ steps.collectimages.outputs.BASENAME }}.iso.minisig
       #    retention-days: 1
@@ -246,14 +245,14 @@ jobs:
         with:
           repository: ${{ secrets.UPLOADREPO }}
           token: ${{ secrets.RELEASE_PAT }}
-          name: v${{ steps.buildiso.outputs.VYOSVER }}
+          name: v${{ steps.buildiso.outputs.VERSION }}
           tag_name: 0-${{ steps.buildiso.outputs.BUILDTIME }}-${{ steps.buildiso.outputs.VERSIONBASE }}-${{ steps.buildiso.outputs.ROLLSTAB }}
           make_latest: true
-          body_path: artifacts/${{ steps.buildiso.outputs.VYOSPKGLIST }}.md
+          body_path: artifacts/${{ steps.buildiso.outputs.PKGLIST }}.md
           draft: false
           prerelease: false
           fail_on_unmatched_files: false
           files: |
-            artifacts/${{ steps.buildiso.outputs.VYOSPKGLIST }}
+            artifacts/${{ steps.buildiso.outputs.PKGLIST }}
             artifacts/${{ steps.collectimages.outputs.BASENAME }}.iso
             artifacts/${{ steps.collectimages.outputs.BASENAME }}.iso.minisig

@@ -67,17 +67,17 @@ on:
         type: choice
         options:
           - None
-          - vyos-build
+          - upstream-repo
           - Extras
           - Kernel
           - Full Build
-      commit_sha:
-        description: 'Commit SHA for selection'
+      package_sha:
+        description: 'Commit SHA for package'
         required: false
         default: ''
         type: string
-      vyos-build-commit:
-        description: 'vyos-build commit id (opt.)'
+      upstream_repo_commit:
+        description: 'Upstream repo SHA (opt.)'
         required: false
         default: ''
         type: string
@@ -105,13 +105,13 @@ on:
         type: string
         default: 'None'
         required: false
-      commit_sha:
+      package_sha:
         description: 'Commit SHA for selection'
         required: false
         default: ''
         type: string
-      vyos-build-commit:
-        description: 'vyos-build commit id (opt.)'
+      upstream_repo_commit:
+        description: 'Upstream repo SHA (opt.)'
         required: false
         default: ''
         type: string
@@ -145,24 +145,24 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       mymatrix: ${{ steps.getPackages.outputs.packages }}
-      vyosbuildSHA: ${{ steps.getVyosBuildSHA.outputs.SHA }}
+      upstream_repo_commit: ${{ steps.getUpstreamSHA.outputs.SHA }}
     steps:
       - name: Print workflow inputs
         run: |
           echo "force_pkg: ${{ inputs.force_pkg }}"
           echo "build_pkg_group: ${{ inputs.build_pkg_group }}"
-          echo "commit_sha: ${{ inputs.commit_sha }}"
-          echo "vyos-build-commit: ${{ inputs.vyos-build-commit }}"
+          echo "package_sha: ${{ inputs.package_sha }}"
+          echo "upstream_repo_commit: ${{ inputs.upstream_repo_commit }}"
           echo "upload_debs: ${{ inputs.upload_debs }}"
           echo "build_iso: ${{ inputs.build_iso }}"
           echo "upload_iso: ${{ inputs.upload_iso }}"
 
-      - name: Set vyos-build commit id
-        id: getVyosBuildSHA
+      - name: Set upstream repo SHA
+        id: getUpstreamSHA
         run: |
-          [ -n "${{ inputs.vyos-build-commit }}" ] \
-            && { echo "SHA=${{ inputs.vyos-build-commit }}" | tee -a $GITHUB_OUTPUT ; } \
-            || { echo "SHA=$(curl -sL https://api.github.com/repos/vyos/vyos-build/commits/${{ env.BUILD_BRANCH }} | jq -r .'sha')" | tee -a $GITHUB_OUTPUT ; }
+          [ -n "${{ inputs.upstream_repo_commit }}" ] \
+            && { echo "SHA=${{ inputs.upstream_repo_commit }}" | tee -a $GITHUB_OUTPUT ; } \
+            || { echo "SHA=$(curl -sL https://api.github.com/repos/${{ vars.UPSTREAM_MAIN_ROUTER_REPO }}/commits/${{ env.BUILD_BRANCH }} | jq -r .'sha')" | tee -a $GITHUB_OUTPUT ; }
 
       - name: Checkout my repository
         id: myRepoCheckout
@@ -174,18 +174,18 @@ jobs:
         id: getPackages
         working-directory: .scripts
         run: |
-          kver=$(curl -sL https://raw.githubusercontent.com/vyos/vyos-build/${{ steps.getVyosBuildSHA.outputs.SHA }}/data/defaults.json | jq -r .kernel_version)
+          kver=$(curl -sL https://raw.githubusercontent.com/${{ vars.UPSTREAM_MAIN_ROUTER_REPO }}/${{ steps.getUpstreamSHA.outputs.SHA }}/data/defaults.json | jq -r .kernel_version)
           echo packages=$(jq -cn --argjson cmds \
           "$(python3 depChecker.py -b '${{ env.BUILD_BRANCH }}' \
            -p '${{ inputs.force_pkg }}' \
-           -c '${{ inputs.commit_sha }}' \
+           -c '${{ inputs.package_sha }}' \
            -g '${{ inputs.build_pkg_group }}')" \
            '{cmd: $cmds}') | tee -a $GITHUB_OUTPUT
 
       - name: Print job outputs
         run: |
           echo "mymatrix: ${{ steps.getPackages.outputs.packages }}"
-          echo "vyosbuildSHA: ${{ steps.getVyosBuildSHA.outputs.SHA }}"
+          echo "upstream_repo_commit: ${{ steps.getUpstreamSHA.outputs.SHA }}"
 
 
 
@@ -200,7 +200,7 @@ jobs:
     runs-on: ubuntu-latest
     needs: setup
     container:
-      image: vyos/vyos-build:${{ github.ref_name }}
+      image: ${{ vars.UPSTREAM_MAIN_ROUTER_REPO }}:${{ github.ref_name }}
       options: --privileged --sysctl net.ipv6.conf.lo.disable_ipv6=0
     strategy:
       matrix: ${{ fromJson(needs.setup.outputs.mymatrix) }}
@@ -210,17 +210,16 @@ jobs:
       - name: Set safe-dir
         run: git config --global --add safe.directory '*'
 
-      - name: Checkout vyos-build
+      - name: Checkout upstream repo
         uses: actions/checkout@v4
-        id: vyosBuildCheckout
         with:
-          repository: 'vyos/vyos-build'
+          repository: '${{ vars.UPSTREAM_MAIN_ROUTER_REPO }}'
           ref: ${{ github.ref_name }}
           show-progress: true
           fetch-depth: 0
 
       - name: Reset repo
-        run: git reset --hard ${{ needs.setup.outputs.vyosbuildSHA }}
+        run: git reset --hard ${{ needs.setup.outputs.upstream_repo_commit }}
 
       - name: Checkout my repository
         id: myRepoCheckout
@@ -232,8 +231,8 @@ jobs:
           rm -rf _moveme
 
       # https://www.freexian.com/lts/extended/docs/how-to-use-extended-lts/
-      # Fix for vyos/vyos-build@ee9b739
-      # https://github.com/vyos/vyos-build/commit/ee9b7396b2d83d19a782186369427aded05c2b82
+      # Fix for ${{ vars.UPSTREAM_MAIN_ROUTER_REPO }}@ee9b739
+      # https://github.com/${{ vars.UPSTREAM_MAIN_ROUTER_REPO }}/commit/ee9b7396b2d83d19a782186369427aded05c2b82
       - name: "Patch: Include upstream Freexian"
         run: |
           sudo wget -q https://deb.freexian.com/extended-lts/archive-key.gpg -O elts-archive-key.gpg \
@@ -295,7 +294,7 @@ jobs:
     uses: ./.github/workflows/build_iso.yml
     secrets: inherit
     with:
-      vyosbuildSHA: ${{ needs.setup.outputs.vyosbuildSHA }}
+      upstream_repo_commit: ${{ needs.setup.outputs.upstream_repo_commit }}
       upload_iso: false
       smoketest: true
 
@@ -304,7 +303,7 @@ jobs:
     needs: [ setup, build-smoketest-iso ]
     runs-on: ubuntu-24.04
     container:
-      image: vyos/vyos-build:${{ github.ref_name }}
+      image: ${{ vars.UPSTREAM_MAIN_ROUTER_REPO }}:${{ github.ref_name }}
       options: --privileged --sysctl net.ipv6.conf.lo.disable_ipv6=0
       volumes:
         - /dev:/dev
@@ -322,21 +321,20 @@ jobs:
       - name: Set safe-dir
         run: git config --global --add safe.directory '*'
 
-      - name: Checkout vyos-build
+      - name: Checkout upstream repo
         uses: actions/checkout@v4
-        id: vyosBuildCheckout
         with:
-          repository: 'vyos/vyos-build'
+          repository: '${{ vars.UPSTREAM_MAIN_ROUTER_REPO }}'
           ref: ${{ github.ref_name }}
           show-progress: true
           fetch-depth: 0
 
       - name: Reset repo
-        run: git reset --hard ${{ needs.setup.outputs.vyosbuildSHA }}
+        run: git reset --hard ${{ needs.setup.outputs.upstream_repo_commit }}
 
       - uses: actions/download-artifact@v4
         with:
-          name: ${{ needs.build-smoketest-iso.outputs.VYOSVER }}-smoketest
+          name: ${{ needs.build-smoketest-iso.outputs.VERSION }}-smoketest
           path: build
 
       - name: Checkout my repository
@@ -348,8 +346,7 @@ jobs:
           mv -f _moveme/.scripts ./
           rm -rf _moveme
 
-      - name: "Patch: Fix vyos-configd start/restart"
-        id: vyos-configd-patch
+      - name: "Patch: Fix configd start/restart"
         run: |
           sed -i 's|sudo systemctl start vyos-configd.service|sudo systemctl restart vyos-configd.service|' scripts/check-qemu-install
 
@@ -377,6 +374,6 @@ jobs:
     uses: ./.github/workflows/build_iso.yml
     secrets: inherit
     with:
-      vyosbuildSHA: ${{ needs.setup.outputs.vyosbuildSHA }}
+      upstream_repo_commit: ${{ needs.setup.outputs.upstream_repo_commit }}
       upload_iso: ${{ inputs.upload_iso }}
       smoketest: false
