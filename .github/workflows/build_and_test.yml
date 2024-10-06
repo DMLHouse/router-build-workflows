@@ -79,7 +79,8 @@ jobs:
     strategy:
       matrix:
         cmd: [
-          'sudo make test',
+          'sudo make test-no-interfaces',
+          'sudo make test-interfaces',
           'sudo make testc',
           'sudo make testraid',
           'sudo make testtpm'
@@ -107,7 +108,6 @@ jobs:
           path: build
 
       - name: Smoketest
-        id: smoketest
         run: ${{ matrix.cmd }}
 
   check-repo-changed:
